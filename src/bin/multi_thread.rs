@@ -80,6 +80,6 @@ fn main() {
         *image.get_pixel_mut(pix.0, pix.1) = image::Rgb(mpix);
     }
 
-    *image.get_pixel_mut(args.img_size / 2, args.img_size / 2) = image::Rgb([255, 0, 0]);
+    //*image.get_pixel_mut(args.img_size / 2, args.img_size / 2) = image::Rgb([255, 0, 0]);
     image.save("output.png").unwrap();
 }
