@@ -6,7 +6,7 @@ use image::ImageBuffer;
 use num::complex::Complex;
 use rayon::prelude::*;
 
-/// Simple program to greet a person
+/// Render in PNG a portion of the mandelbrot set
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 pub struct Args {
