@@ -7,7 +7,7 @@ Run mandelbrot set render using WebGPU, in web or locally.
 
 Compile the project and run it locally with `make`.
 
-For a wasm package to execute it on a web browser, compile it with `make build-web` and open `index.html`.
+For a wasm binary to execute it on a web browser, compile it with `make build-web` and open `index.html`.
 
 ### PNG generation
 
