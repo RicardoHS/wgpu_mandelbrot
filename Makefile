@@ -5,4 +5,4 @@ build-web:
 	wasm-pack build --target web
 	
 build-cli:
-	cargo r --bin multi_thread
+	cargo r --release --bin multi_thread

@@ -15,7 +15,7 @@ You can generate PNG images of portions of the mandelbrot set with a cli. It wil
 with the render.
 
 You can build a local PNG render cli with `make build-cli`. This will leave an executable 
-`./target/debug/multi_thread`. You can execute it with `-h` to see available options.
+`./target/release/multi_thread`. You can execute it with `-h` to see available options.
 
 There is also available the same cli without multithreading (slower). You can compile it with 
 `cargo r --release --bin single_thread` and check usage with `./target/release/single_thread -h`.
