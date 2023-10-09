@@ -43,7 +43,6 @@ impl InputController {
                     (6. / self.fractal_info.scale) * (delta.0 as f32 / self.screen_info.img_size_w);
                 self.fractal_info.pos_y -=
                     (6. / self.fractal_info.scale) * (delta.1 as f32 / self.screen_info.img_size_h);
-                log::error!("{:?}", self.fractal_info);
                 true
             }
             _ => false,
@@ -494,7 +493,6 @@ pub async fn run() {
 
     // State::new uses async code, so we're going to wait for it to finish
     let mut state = State::new(window).await;
-    log::error!("{:?}", state.size);
 
     event_loop.run(move |event, _, control_flow| {
         match event {
