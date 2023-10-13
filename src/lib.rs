@@ -237,7 +237,7 @@ pub async fn run() {
         // Winit prevents sizing with CSS, so we have to set
         // the size manually when on web.
         use winit::dpi::PhysicalSize;
-        window.set_inner_size(PhysicalSize::new(1024, 1024));
+        window.set_inner_size(PhysicalSize::new(1920, 1080));
 
         use winit::platform::web::WindowExtWebSys;
         web_sys::window()
