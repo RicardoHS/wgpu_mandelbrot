@@ -1,6 +1,11 @@
 use std::iter;
+mod input_controller;
+mod wbuffer;
+mod wpipeline;
 
-use wgpu::util::DeviceExt;
+use wbuffer::WBuffer;
+use wpipeline::WPipeline;
+
 use winit::{
     event::*,
     event_loop::{ControlFlow, EventLoop},
@@ -10,142 +15,18 @@ use winit::{
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
-#[repr(C)]
-#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-struct FractalInfo {
-    pos_x: f32,
-    pos_y: f32,
-    scale: f32,
-    pad: f32,
-}
-
-#[repr(C)]
-#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-struct ScreenInfo {
-    img_size_w: f32,
-    img_size_h: f32,
-    pad: f32,
-    pad2: f32,
-}
-
-#[derive(Debug)]
-struct InputController {
-    fractal_info: FractalInfo,
-    screen_info: ScreenInfo,
-    is_mouse_clicked: bool,
-}
-
-impl InputController {
-    fn process_mouse_events(&mut self, event: &DeviceEvent) -> bool {
-        match event {
-            DeviceEvent::MouseMotion { delta } if self.is_mouse_clicked == true => {
-                self.fractal_info.pos_x -=
-                    (6. / self.fractal_info.scale) * (delta.0 as f32 / self.screen_info.img_size_w);
-                self.fractal_info.pos_y -=
-                    (6. / self.fractal_info.scale) * (delta.1 as f32 / self.screen_info.img_size_h);
-                true
-            }
-            _ => false,
-        }
-    }
-
-    fn process_events(&mut self, event: &WindowEvent) -> bool {
-        match event {
-            WindowEvent::MouseWheel { delta, .. } => match delta {
-                MouseScrollDelta::LineDelta(_, y) => {
-                    self.fractal_info.scale *= if *y >= 0.0 { 1.1 } else { 0.9 };
-                    true
-                }
-                MouseScrollDelta::PixelDelta(lpos) => {
-                    self.fractal_info.scale *= if lpos.y >= 0.0 { 1.1 } else { 0.9 };
-                    true
-                }
-            },
-            WindowEvent::MouseInput { button, state, .. } => match button {
-                MouseButton::Left => match state {
-                    ElementState::Pressed => {
-                        self.is_mouse_clicked = true;
-                        true
-                    }
-                    ElementState::Released => {
-                        self.is_mouse_clicked = false;
-                        true
-                    }
-                },
-                _ => false,
-            },
-            _ => false,
-        }
-    }
-}
-
-#[repr(C)]
-#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-struct Vertex {
-    position: [f32; 3],
-    color: [f32; 3],
-}
-
-impl Vertex {
-    fn desc() -> wgpu::VertexBufferLayout<'static> {
-        wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &[
-                wgpu::VertexAttribute {
-                    offset: 0,
-                    shader_location: 0,
-                    format: wgpu::VertexFormat::Float32x3,
-                },
-                wgpu::VertexAttribute {
-                    offset: std::mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
-                    shader_location: 1,
-                    format: wgpu::VertexFormat::Float32x3,
-                },
-            ],
-        }
-    }
-}
-
-const VERTICES: &[Vertex] = &[
-    Vertex {
-        position: [-1.0, 1.0, 0.0],
-        color: [1., 0.0, 0.],
-    }, // A
-    Vertex {
-        position: [-1.0, -1.0, 0.0],
-        color: [0.0, 1.0, 0.],
-    }, // B
-    Vertex {
-        position: [1.0, 1.0, 0.0],
-        color: [0.0, 0.0, 1.0],
-    }, // C
-    Vertex {
-        position: [1.0, -1.0, 0.0],
-        color: [0.1, 0.2, 0.3],
-    }, // D
-];
-
-const INDICES: &[u16] = &[0, 1, 2, 1, 3, 2];
-
 struct State {
     surface: wgpu::Surface,
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
     size: winit::dpi::PhysicalSize<u32>,
-    render_pipeline: wgpu::RenderPipeline,
-    // NEW!
-    vertex_buffer: wgpu::Buffer,
-    index_buffer: wgpu::Buffer,
-    num_indices: u32,
     window: Window,
     // OWN!
-    input_controller: InputController,
-    fractal_info_buffer: wgpu::Buffer,
-    fractal_info_bind_group: wgpu::BindGroup,
-    screen_info_buffer: wgpu::Buffer,
-    screen_info_bind_group: wgpu::BindGroup,
+    render_pipeline: WPipeline,
+    input_controller: input_controller::InputController,
+    fractal_info_wbuffer: wbuffer::WBuffer,
+    screen_info_wbuffer: wbuffer::WBuffer,
 }
 
 impl State {
@@ -213,148 +94,29 @@ impl State {
         };
         surface.configure(&device, &config);
 
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
-        });
+        let input_controller = input_controller::InputController::new_empty();
 
-        let input_controller = InputController {
-            fractal_info: FractalInfo {
-                pos_x: 0.0,
-                pos_y: 0.0,
-                scale: 1.0,
-                pad: 0.0,
-            },
-            screen_info: ScreenInfo {
-                img_size_w: 100.0,
-                img_size_h: 100.0,
-                pad: 0.0,
-                pad2: 0.0,
-            },
-            is_mouse_clicked: false,
-        };
+        let fractal_info_wbuffer = WBuffer::new_fragment_uniform(
+            &device,
+            bytemuck::cast_slice(&[input_controller.fractal_info]),
+            "FractalInfo",
+        );
+        let screen_info_wbuffer = WBuffer::new_fragment_uniform(
+            &device,
+            bytemuck::cast_slice(&[input_controller.screen_info]),
+            "ScreenInfo",
+        );
 
-        let fractal_info_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("FractalInfo Buffer"),
-            contents: bytemuck::cast_slice(&[input_controller.fractal_info]),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
-        let fractal_info_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }],
-                label: Some("fractal_info_bind_group_layout"),
-            });
-        let fractal_info_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &fractal_info_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: fractal_info_buffer.as_entire_binding(),
-            }],
-            label: Some("camera_bind_group"),
-        });
-
-        let screen_info_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("ScreenInfo Buffer"),
-            contents: bytemuck::cast_slice(&[input_controller.screen_info]),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
-        let screen_info_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }],
-                label: Some("screen_info_bind_group_layout"),
-            });
-        let screen_info_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &screen_info_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: screen_info_buffer.as_entire_binding(),
-            }],
-            label: Some("camera_bind_group"),
-        });
-
-        let render_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("Render Pipeline Layout"),
-                bind_group_layouts: &[
-                    &fractal_info_bind_group_layout,
-                    &screen_info_bind_group_layout,
-                ],
-                push_constant_ranges: &[],
-            });
-
-        let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Render Pipeline"),
-            layout: Some(&render_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: "vs_main",
-                buffers: &[Vertex::desc()],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: "fs_main",
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: config.format,
-                    blend: Some(wgpu::BlendState {
-                        color: wgpu::BlendComponent::REPLACE,
-                        alpha: wgpu::BlendComponent::REPLACE,
-                    }),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: Some(wgpu::Face::Back),
-                // Setting this to anything other than Fill requires Features::POLYGON_MODE_LINE
-                // or Features::POLYGON_MODE_POINT
-                polygon_mode: wgpu::PolygonMode::Fill,
-                // Requires Features::DEPTH_CLIP_CONTROL
-                unclipped_depth: false,
-                // Requires Features::CONSERVATIVE_RASTERIZATION
-                conservative: false,
-            },
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState {
-                count: 1,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            },
-            // If the pipeline will be used with a multiview render pass, this
-            // indicates how many array layers the attachments will have.
-            multiview: None,
-        });
-
-        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Vertex Buffer"),
-            contents: bytemuck::cast_slice(VERTICES),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Index Buffer"),
-            contents: bytemuck::cast_slice(INDICES),
-            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::UNIFORM,
-        });
-        let num_indices = INDICES.len() as u32;
+        let render_pipeline = WPipeline::new_render_pipeline(
+            &device,
+            &[
+                &fractal_info_wbuffer.bind_group_layout,
+                &screen_info_wbuffer.bind_group_layout,
+            ],
+            include_str!("shader.wgsl").into(),
+            config.format,
+            "RenderPipeline1",
+        );
 
         Self {
             surface,
@@ -363,15 +125,10 @@ impl State {
             config,
             size,
             render_pipeline,
-            vertex_buffer,
-            index_buffer,
-            num_indices,
             window,
             input_controller,
-            fractal_info_buffer,
-            fractal_info_bind_group,
-            screen_info_buffer,
-            screen_info_bind_group,
+            fractal_info_wbuffer,
+            screen_info_wbuffer,
         }
     }
 
@@ -401,12 +158,12 @@ impl State {
 
     fn update(&mut self) {
         self.queue.write_buffer(
-            &self.fractal_info_buffer,
+            &self.fractal_info_wbuffer.buffer,
             0,
             bytemuck::cast_slice(&[self.input_controller.fractal_info]),
         );
         self.queue.write_buffer(
-            &self.screen_info_buffer,
+            &self.screen_info_wbuffer.buffer,
             0,
             bytemuck::cast_slice(&[self.input_controller.screen_info]),
         );
@@ -443,12 +200,15 @@ impl State {
                 depth_stencil_attachment: None,
             });
 
-            render_pass.set_pipeline(&self.render_pipeline);
-            render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-            render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-            render_pass.set_bind_group(0, &self.fractal_info_bind_group, &[]);
-            render_pass.set_bind_group(1, &self.screen_info_bind_group, &[]);
-            render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
+            render_pass.set_pipeline(&self.render_pipeline.pipeline);
+            render_pass.set_vertex_buffer(0, self.render_pipeline.vertex_buffer.slice(..));
+            render_pass.set_index_buffer(
+                self.render_pipeline.index_buffer.slice(..),
+                wgpu::IndexFormat::Uint16,
+            );
+            render_pass.set_bind_group(0, &self.fractal_info_wbuffer.bind_group, &[]);
+            render_pass.set_bind_group(1, &self.screen_info_wbuffer.bind_group, &[]);
+            render_pass.draw_indexed(0..self.render_pipeline.num_indices, 0, 0..1);
         }
 
         self.queue.submit(iter::once(encoder.finish()));
