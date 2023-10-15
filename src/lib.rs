@@ -234,14 +234,19 @@ pub async fn run() {
 
     #[cfg(target_arch = "wasm32")]
     {
-        // Winit prevents sizing with CSS, so we have to set
-        // the size manually when on web.
-        use winit::dpi::PhysicalSize;
-        window.set_inner_size(PhysicalSize::new(1920, 1080));
-
+        use winit::dpi::{LogicalSize, PhysicalSize};
         use winit::platform::web::WindowExtWebSys;
+
         web_sys::window()
-            .and_then(|win| win.document())
+            .and_then(|win| {
+                let width = win.inner_width().unwrap().as_f64().unwrap() as u32;
+                let height = win.inner_height().unwrap().as_f64().unwrap() as u32;
+                let factor = window.scale_factor();
+                let logical = LogicalSize { width, height };
+                let PhysicalSize { width, height }: PhysicalSize<u32> = logical.to_physical(factor);
+                window.set_inner_size(PhysicalSize::new(width, height));
+                win.document()
+            })
             .and_then(|doc| {
                 let dst = doc.get_element_by_id("wgpu_mandelbrot")?;
                 let canvas = web_sys::Element::from(window.canvas());
